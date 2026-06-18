@@ -20,11 +20,17 @@ def failure_breakdown(records: list[RunRecord]) -> dict:
     grouped: dict[str, Counter] = defaultdict(Counter)
     for record in records:
         grouped[record.agent_type][record.failure_mode] += 1
+        grouped["overall"][record.failure_mode] += 1
     return {agent: dict(counter) for agent, counter in grouped.items()}
 
 def build_report(records: list[RunRecord], dataset_name: str, mode: str = "mock") -> ReportPayload:
-    examples = [{"qid": r.qid, "agent_type": r.agent_type, "gold_answer": r.gold_answer, "predicted_answer": r.predicted_answer, "is_correct": r.is_correct, "attempts": r.attempts, "failure_mode": r.failure_mode, "reflection_count": len(r.reflections)} for r in records]
-    return ReportPayload(meta={"dataset": dataset_name, "mode": mode, "num_records": len(records), "agents": sorted({r.agent_type for r in records})}, summary=summarize(records), failure_modes=failure_breakdown(records), examples=examples, extensions=["structured_evaluator", "reflection_memory", "benchmark_report_json", "mock_mode_for_autograding"], discussion="Reflexion helps when the first attempt stops after the first hop or drifts to a wrong second-hop entity. The tradeoff is higher attempts, token cost, and latency. In a real report, students should explain when the reflection memory was useful, which failure modes remained, and whether evaluator quality limited gains.")
+    examples = [{"qid": r.qid, "agent_type": r.agent_type, "gold_answer": r.gold_answer, "predicted_answer": r.predicted_answer, "is_correct": r.is_correct, "attempts": r.attempts, "failure_mode": r.failure_mode, "reflection_count": len(r.reflections), "traces": [trace.model_dump() for trace in r.traces]} for r in records[:50]]
+    discussion = (
+        "Reflexion is most useful when the first answer is a plausible partial hop rather than a fully grounded final answer. "
+        "The reflection step turns evaluator feedback into a short memory item, so the next actor call can explicitly verify entity links, complete missing hops, and check the final entity against the supporting paragraph. "
+        "The tradeoff is measurable: Reflexion spends more calls, tokens, and latency than ReAct. Remaining failures usually come from weak evidence retrieval in the supplied context, evaluator false positives, or reflections that are too generic to change the next attempt."
+    )
+    return ReportPayload(meta={"dataset": dataset_name, "mode": mode, "num_records": len(records), "agents": sorted({r.agent_type for r in records})}, summary=summarize(records), failure_modes=failure_breakdown(records), examples=examples, extensions=["structured_evaluator", "reflection_memory", "benchmark_report_json", "mock_mode_for_autograding", "adaptive_max_attempts"], discussion=discussion)
 
 def save_report(report: ReportPayload, out_dir: str | Path) -> tuple[Path, Path]:
     out_dir = Path(out_dir)
